@@ -67,7 +67,7 @@ final class WorkflowExecutor
         $arguments = $workflow->resolveMethodDependencies($run->workflowArguments(), $entryMethod);
 
         try {
-            $workflowExecution = WorkflowExecution::start($workflow, $arguments, $run->started_at);
+            $workflowExecution = WorkflowExecution::start($workflow, $arguments, RedriveReplayClock::startedAt($run));
         } catch (Throwable $throwable) {
             $this->failRun($run, $task, $throwable, 'workflow_run', $run->id);
 
@@ -259,18 +259,21 @@ final class WorkflowExecutor
                 $activityCompletion = $this->activityCompletionEvent($run, $sequence);
 
                 if ($activityCompletion !== null) {
+                    $propagatedActivityFailure = null;
+
                     try {
                         $this->syncWorkflowCursor($workflow, $sequence + 1);
                         if ($activityCompletion->event_type === HistoryEventType::ActivityCompleted) {
                             $current = $workflowExecution->send(
                                 $this->activityResult($activityCompletion, $run),
-                                $activityCompletion->recorded_at,
+                                RedriveReplayClock::activityCompletedAt($activityCompletion),
                             );
                         } else {
                             $failureId = $activityCompletion->payload['failure_id'] ?? null;
 
+                            $propagatedActivityFailure = $this->activityException($activityCompletion, null, $run);
                             $current = $workflowExecution->throw(
-                                $this->activityException($activityCompletion, null, $run),
+                                $propagatedActivityFailure,
                                 $activityCompletion->recorded_at,
                             );
 
@@ -283,7 +286,15 @@ final class WorkflowExecutor
                             );
                         }
                     } catch (Throwable $throwable) {
-                        $this->failRun($run, $task, $throwable, 'workflow_run', $run->id);
+                        $this->failRun(
+                            $run,
+                            $task,
+                            $throwable,
+                            'workflow_run',
+                            $run->id,
+                            $activityCompletion->event_type === HistoryEventType::ActivityFailed
+                                && $throwable === $propagatedActivityFailure ? $sequence : null,
+                        );
 
                         return null;
                     }
@@ -323,6 +334,8 @@ final class WorkflowExecutor
                     return null;
                 }
 
+                $propagatedActivityFailure = null;
+
                 try {
                     $this->syncWorkflowCursor($workflow, $sequence + 1);
                     if ($execution->status === ActivityStatus::Completed) {
@@ -331,10 +344,8 @@ final class WorkflowExecutor
                         $failure = $run->failures
                             ->firstWhere('source_id', $execution->id);
 
-                        $current = $workflowExecution->throw(
-                            $this->activityException(null, $execution, $run),
-                            $execution->closed_at,
-                        );
+                        $propagatedActivityFailure = $this->activityException(null, $execution, $run);
+                        $current = $workflowExecution->throw($propagatedActivityFailure, $execution->closed_at);
 
                         $this->recordFailureHandled(
                             $run,
@@ -350,7 +361,15 @@ final class WorkflowExecutor
                         );
                     }
                 } catch (Throwable $throwable) {
-                    $this->failRun($run, $task, $throwable, 'workflow_run', $run->id);
+                    $this->failRun(
+                        $run,
+                        $task,
+                        $throwable,
+                        'workflow_run',
+                        $run->id,
+                        $execution->status === ActivityStatus::Failed
+                            && $throwable === $propagatedActivityFailure ? $sequence : null,
+                    );
 
                     return null;
                 }
@@ -3765,6 +3784,7 @@ final class WorkflowExecutor
         Throwable $throwable,
         string $sourceKind,
         string $sourceId,
+        ?int $failedStepSequence = null,
     ): void {
         if ($run->status === RunStatus::Completed && $run->historyEvents()
             ->where('event_type', HistoryEventType::WorkflowCompleted->value)->exists()) {
@@ -3827,6 +3847,11 @@ final class WorkflowExecutor
             'message' => $failure->message,
             'exception' => $exceptionPayload,
         ];
+
+        if ($failedStepSequence !== null) {
+            $failedEventPayload['failed_step_sequence'] = $failedStepSequence;
+            $failedEventPayload['failed_step_kind'] = 'activity';
+        }
 
         if ($throwable instanceof StructuralLimitExceededException) {
             try {
