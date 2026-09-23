@@ -37,7 +37,8 @@ final class V2ReplayDiffTest extends TestCase
         $this->runReadyTaskForRun($runId, TaskType::Activity);
         $this->runReadyTaskForRun($runId, TaskType::Workflow);
 
-        $bundle = HistoryExport::forRun(WorkflowRun::query()->findOrFail($runId));
+        $run = WorkflowRun::query()->findOrFail($runId);
+        $bundle = HistoryExport::forRun($run);
 
         $report = (new ReplayDiff())->diffExport($bundle);
 
@@ -48,6 +49,18 @@ final class V2ReplayDiffTest extends TestCase
         $this->assertNull($report['divergence']);
         $this->assertNull($report['error']);
         $this->assertIsInt($report['replay']['sequence']);
+
+        $unloadedRun = $run->fresh();
+        $unloadedReport = (new ReplayDiff())->diffRun($unloadedRun);
+        $this->assertSame(ReplayDiff::STATUS_REPLAYED, $unloadedReport['status']);
+        $this->assertSame($runId, $unloadedReport['workflow']['workflow_run_id']);
+        $this->assertNull($unloadedReport['workflow']['history_event_count']);
+
+        $unloadedRun->load('historyEvents');
+        $loadedReport = (new ReplayDiff())->diffRun($unloadedRun);
+        $this->assertSame(ReplayDiff::STATUS_REPLAYED, $loadedReport['status']);
+        $this->assertSame($unloadedRun->historyEvents->count(), $loadedReport['workflow']['history_event_count']);
+        $this->assertSame($unloadedRun->last_history_sequence, $loadedReport['workflow']['last_history_sequence']);
 
         $path = tempnam(sys_get_temp_dir(), 'replay-verify-command-');
         $this->assertIsString($path);
