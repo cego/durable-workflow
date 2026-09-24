@@ -1,9 +1,10 @@
 {
-    "name": "durable-workflow/workflow",
+    "name": "cego/durable-workflow",
     "description": "Durable workflow engine that allows users to write long running persistent distributed workflows (orchestrations) in PHP powered by Laravel queues.",
     "type": "library",
     "license": "MIT",
     "replace": {
+        "durable-workflow/workflow": "self.version",
         "laravel-workflow/laravel-workflow": "self.version"
     },
     "autoload": {
