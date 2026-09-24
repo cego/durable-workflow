@@ -66,7 +66,7 @@ final class PackageBoundaryTest extends TestCase
         $this->assertStringContainsString('runtime', $normalizedDescription);
         $this->assertStringContainsString('laravel', $normalizedDescription);
 
-        $this->assertSame('durable-workflow/workflow', $composer['name'] ?? null);
+        $this->assertSame('cego/durable-workflow', $composer['name'] ?? null);
 
         $dependencies = $composer['require'] ?? null;
         $this->assertIsArray($dependencies);

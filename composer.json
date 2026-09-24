@@ -1,5 +1,5 @@
 {
-    "name": "durable-workflow/workflow",
+    "name": "cego/durable-workflow",
     "description": "Embedded durable workflow runtime and orchestration engine for Laravel applications.",
     "type": "library",
     "license": "MIT",
